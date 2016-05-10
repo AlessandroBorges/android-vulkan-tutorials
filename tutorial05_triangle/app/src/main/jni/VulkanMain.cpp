@@ -18,9 +18,10 @@
 #include <android_native_app_glue.h>
 #include "vulkan_wrapper.h"
 #include "VulkanMain.hpp"
+#include "TutorialValLayer.hpp"
 
 // Android log function wrappers
-static const char* kTAG = "Vulkan-Tutorial04";
+static const char* kTAG = "Vulkan-Tutorial05";
 #define LOGI(...) \
   ((void)__android_log_print(ANDROID_LOG_INFO, kTAG, __VA_ARGS__))
 #define LOGW(...) \
@@ -91,13 +92,10 @@ android_app* androidAppCtx = nullptr;
 // Create vulkan device
 void CreateVulkanDevice(ANativeWindow* platformWindow,
                         VkApplicationInfo* appInfo) {
-  std::vector<const char *> instance_extensions;
-  std::vector<const char *> device_extensions;
 
-  instance_extensions.push_back("VK_KHR_surface");
-  instance_extensions.push_back("VK_KHR_android_surface");
-
-  device_extensions.push_back("VK_KHR_swapchain");
+  // prepare debug and layer objects
+  LayerAndExtensions layerAndExt;
+  layerAndExt.AddInstanceExt(layerAndExt.GetDbgExtName());
 
   // **********************************************************
   // Create the Vulkan instance
@@ -105,12 +103,16 @@ void CreateVulkanDevice(ANativeWindow* platformWindow,
           .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
           .pNext = nullptr,
           .pApplicationInfo = appInfo,
-          .enabledExtensionCount = static_cast<uint32_t>(instance_extensions.size()),
-          .ppEnabledExtensionNames = instance_extensions.data(),
-          .enabledLayerCount = 0,
-          .ppEnabledLayerNames = nullptr,
+      .enabledExtensionCount = layerAndExt.InstExtCount(),
+      .ppEnabledExtensionNames =
+      static_cast<const char* const*>(layerAndExt.InstExtNames()),
+      .enabledLayerCount = layerAndExt.InstLayerCount(),
+      .ppEnabledLayerNames = static_cast<const char* const*>(layerAndExt.InstLayerNames()),
   };
   CALL_VK(vkCreateInstance(&instanceCreateInfo, nullptr, &device.instance_));
+  // Create debug callback obj and connect to vulkan instance
+  layerAndExt.HookDbgReportExt(device.instance_);
+
   VkAndroidSurfaceCreateInfoKHR createInfo{
           .sType = VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR,
           .pNext = nullptr,
@@ -122,11 +124,19 @@ void CreateVulkanDevice(ANativeWindow* platformWindow,
   // Find one GPU to use:
   // On Android, every GPU device is equal -- supporting graphics/compute/present
   // for this sample, we use the very first GPU device found on the system
-  uint32_t  gpuCount = 0;
-  CALL_VK(vkEnumeratePhysicalDevices(device.instance_, &gpuCount, nullptr));
-  VkPhysicalDevice tmpGpus[gpuCount];
-  CALL_VK(vkEnumeratePhysicalDevices(device.instance_, &gpuCount, tmpGpus));
+  uint32_t  count = 0;
+  CALL_VK(vkEnumeratePhysicalDevices(device.instance_, &count, nullptr));
+  VkPhysicalDevice tmpGpus[count];
+  CALL_VK(vkEnumeratePhysicalDevices(device.instance_, &count, tmpGpus));
   device.gpuDevice_ = tmpGpus[0];     // Pick up the first GPU Device
+
+  // Enumerate available device validation layers & extensions
+  layerAndExt.InitDevLayersAndExt(device.gpuDevice_);
+
+  vkGetPhysicalDeviceQueueFamilyProperties(device.gpuDevice_, &count, nullptr);
+  VkQueueFamilyProperties  queueFaimlyInfo[count];
+  vkGetPhysicalDeviceQueueFamilyProperties(device.gpuDevice_, &count, queueFaimlyInfo);
+
 
   // Create a logical device (vulkan device)
   float priorities[] = { 1.0f, };
@@ -144,10 +154,12 @@ void CreateVulkanDevice(ANativeWindow* platformWindow,
           .pNext = nullptr,
           .queueCreateInfoCount = 1,
           .pQueueCreateInfos = &queueCreateInfo,
-          .enabledLayerCount = 0,
-          .ppEnabledLayerNames = nullptr,
-          .enabledExtensionCount = static_cast<uint32_t>(device_extensions.size()),
-          .ppEnabledExtensionNames = device_extensions.data(),
+          .enabledLayerCount = layerAndExt.DevLayerCount(),
+          .ppEnabledLayerNames =
+              static_cast<const char* const*>(layerAndExt.DevLayerNames()),
+          .enabledExtensionCount = layerAndExt.DevExtCount(),
+          .ppEnabledExtensionNames =
+              static_cast<const char* const*>(layerAndExt.DevExtNames()),
           .pEnabledFeatures = nullptr,
   };
 
@@ -820,7 +832,7 @@ bool VulkanDrawFrame(void) {
   CALL_VK(vkQueueSubmit(device.queue_, 1, &submit_info, render.fence_));
   CALL_VK(vkWaitForFences(device.device_, 1, &render.fence_, VK_TRUE, 100000000));
 
-  LOGI("Drawing frames......");
+  // LOGI("Drawing frames......");
 
   VkResult result;
   VkPresentInfoKHR presentInfo {
